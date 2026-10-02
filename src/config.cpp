@@ -26,6 +26,18 @@ static void readStringField(
     out = item->valuestring;
 }
 
+// Read a boolean field from a cJSON object into `out`. Leaves `out` untouched
+// when the field is missing or not a boolean.
+static void readBoolField(
+  const cJSON *obj,
+  const char *key,
+  bool &out
+) {
+  const cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, key);
+  if (cJSON_IsBool(item))
+    out = cJSON_IsTrue(item) != 0;
+}
+
 void HTiLoadLoaderConfig() {
   // Build the config path next to the DLL.
   std::wstring path = HTiUtf8ToWstring(gPathDll.c_str());
@@ -57,11 +69,20 @@ void HTiLoadLoaderConfig() {
   if (cJSON_IsObject(section)) {
     readStringField(section, "target_executable", gConfigTargetExe);
     readStringField(section, "backend", gConfigForceBackend);
+    readBoolField(section, "profile", gConfigProfile);
+    readBoolField(section, "disable_overlay", gConfigDisableOverlay);
+    readBoolField(section, "disable_input_hook", gConfigDisableInputHook);
 
     if (!gConfigTargetExe.empty())
       LOGI("Config: target executable overridden to '%s'.\n", gConfigTargetExe.c_str());
     if (!gConfigForceBackend.empty())
       LOGI("Config: forced backend '%s'.\n", gConfigForceBackend.c_str());
+    if (gConfigProfile)
+      LOGI("Config: frame profiling enabled.\n");
+    if (gConfigDisableOverlay)
+      LOGW("Config: overlay rendering disabled.\n");
+    if (gConfigDisableInputHook)
+      LOGW("Config: window process hook disabled.\n");
   }
 
   cJSON_Delete(root);

@@ -57,6 +57,7 @@ struct DeviceDispatchTable {
   PFN_vkQueuePresentKHR QueuePresentKHR;
   PFN_vkCreateSwapchainKHR CreateSwapchainKHR;
   PFN_vkGetDeviceQueue GetDeviceQueue;
+  PFN_vkAcquireNextImageKHR AcquireNextImageKHR;
 };
 
 struct QueueData;
@@ -611,8 +612,10 @@ static VkResult renderGui(
     // Never make the game's present thread wait indefinitely for the overlay.
     // Under GPU pressure we skip this overlay frame and forward the original
     // present, keeping input and game UI responsive.
-    if (vkWaitForFences(g->device, 1, &f->Fence, VK_TRUE, 0) != VK_SUCCESS)
+    if (vkWaitForFences(g->device, 1, &f->Fence, VK_TRUE, 0) != VK_SUCCESS) {
+      HTiDiagCountOverlayFrame(1);
       return queueData->device->deviceTable.QueuePresentKHR(queue, pPresentInfo);
+    }
     vkResetFences(g->device, 1, &f->Fence);
 
     {
@@ -661,15 +664,25 @@ static VkResult renderGui(
     }
     HTiBackendGLLeaveCritical();
 
-    // Create new frame.
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplWin32_NewFrame();
-    ImGui::NewFrame();
+    // ImGui's frame is built once per present. ImGui::NewFrame() must not run
+    // more than once between frames, so only the first swapchain of a
+    // multi-swapchain present drives it; the rest re-record the same draw data
+    // into their own command buffer.
+    if (i == 0) {
+      // Replay the window messages the game's message thread recorded since the
+      // last frame, before ImGui reads its inputs.
+      HTiPumpInput();
 
-    // Render ImGui.
-    HTiUpdateGUI();
+      // Create new frame.
+      ImGui_ImplVulkan_NewFrame();
+      ImGui_ImplWin32_NewFrame();
+      ImGui::NewFrame();
 
-    ImGui::Render();
+      // Render ImGui.
+      HTiUpdateGUI();
+
+      ImGui::Render();
+    }
     ImDrawData* drawData = ImGui::GetDrawData();
     // Record dear imgui primitives into command buffer.
     ImGui_ImplVulkan_RenderDrawData(drawData, f->CommandBuffer);
@@ -726,9 +739,13 @@ static VkResult renderGui(
         result = r;
     } else {
       static thread_local std::vector<VkPipelineStageFlags> waitStages;
+      // The overlay writes to the swapchain image's color attachment, so the
+      // game's render-complete semaphores must be waited on at
+      // COLOR_ATTACHMENT_OUTPUT. Waiting at FRAGMENT_SHADER instead let the
+      // overlay's attachment writes start before the game's were visible.
       waitStages.assign(
         waitSemaphoresCount,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
 
       VkSubmitInfo info = {};
       info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -757,6 +774,8 @@ static VkResult renderGui(
         result = r;
     }
   }
+
+  HTiDiagCountOverlayFrame(0);
 
   return result;
 }
@@ -876,6 +895,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL HT_vkCreateDevice(
     *pDevice, "vkCreateSwapchainKHR");
   deviceTable.GetDeviceQueue = (PFN_vkGetDeviceQueue)vkGetDeviceProcAddrNext(
     *pDevice, "vkGetDeviceQueue");
+  deviceTable.AcquireNextImageKHR = (PFN_vkAcquireNextImageKHR)vkGetDeviceProcAddrNext(
+    *pDevice, "vkAcquireNextImageKHR");
 
   // Store the table and related VkQueue.
   std::lock_guard<std::mutex> lock(gMutex);
@@ -939,7 +960,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL HT_vkCreateSwapchainKHR(
 /**
  * Present draw data. The ImGui calls injected here.
  */
-static VKAPI_ATTR VkResult VKAPI_CALL HT_vkQueuePresentKHR(
+static VKAPI_ATTR VkResult VKAPI_CALL HT_vkQueuePresentKHRImpl(
   VkQueue queue,
   const VkPresentInfoKHR *pPresentInfo
 ) {
@@ -954,6 +975,12 @@ static VKAPI_ATTR VkResult VKAPI_CALL HT_vkQueuePresentKHR(
   if (!gGameStatus.window) {
     return queueTable.QueuePresentKHR(queue, pPresentInfo);
   }
+  // Bisection switch: hand the game's presents straight through, so the overlay
+  // cannot be blamed for whatever is being measured. The GUI is never
+  // initialized in this mode either (this is where it starts), so no window
+  // process hook is installed and no mod GUI runs.
+  if (gConfigDisableOverlay)
+    return queueTable.QueuePresentKHR(queue, pPresentInfo);
   // Serialize overlay init and rendering. The check-then-init of
   // gGuiStatus.isInited is not atomic, so two present threads could otherwise
   // both run initVulkan() (double instance/device, leaks), and renderGui
@@ -965,6 +992,57 @@ static VKAPI_ATTR VkResult VKAPI_CALL HT_vkQueuePresentKHR(
     gGuiStatus.isInited = 1;
   }
   return renderGui(queue, pPresentInfo);
+}
+
+/**
+ * Present entry point every device dispatch table points at.
+ *
+ * Wrapped so the frame-time profile can bracket everything the loader does
+ * inside a present, and so the game's frame interval can be measured as the gap
+ * between two of these calls.
+ */
+static VKAPI_ATTR VkResult VKAPI_CALL HT_vkQueuePresentKHR(
+  VkQueue queue,
+  const VkPresentInfoKHR *pPresentInfo
+) {
+  VkResult result;
+
+  HTiDiagFrameBegin();
+  result = HT_vkQueuePresentKHRImpl(queue, pPresentInfo);
+  HTiDiagFrameEnd();
+
+  return result;
+}
+
+/**
+ * Acquire a swapchain image.
+ *
+ * Hooked only to measure how long the game blocks here. The overlay takes an
+ * extra submit and an extra present on the graphics queue every frame, and if
+ * that keeps the swapchain drained, this is where the game's frame time goes.
+ * The call itself is forwarded unchanged.
+ */
+static VKAPI_ATTR VkResult VKAPI_CALL HT_vkAcquireNextImageKHR(
+  VkDevice device,
+  VkSwapchainKHR swapchain,
+  uint64_t timeout,
+  VkSemaphore semaphore,
+  VkFence fence,
+  uint32_t *pImageIndex
+) {
+  DeviceDispatchTable table;
+  i64 start;
+  VkResult result;
+
+  if (!getDeviceDispatchTable(device, table) || !table.AcquireNextImageKHR)
+    return VK_ERROR_INITIALIZATION_FAILED;
+
+  start = HTiDiagTicks();
+  result = table.AcquireNextImageKHR(
+    device, swapchain, timeout, semaphore, fence, pImageIndex);
+  HTiDiagAddAcquireTicks(HTiDiagTicks() - start);
+
+  return result;
 }
 
 // ----------------------------------------------------------------------------
@@ -1026,6 +1104,8 @@ extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL HT_vkGetDeviceProcAddr(
     return (PFN_vkVoidFunction)HT_vkCreateSwapchainKHR;
   if (!strcmp(pName, "vkQueuePresentKHR"))
     return (PFN_vkVoidFunction)HT_vkQueuePresentKHR;
+  if (!strcmp(pName, "vkAcquireNextImageKHR"))
+    return (PFN_vkVoidFunction)HT_vkAcquireNextImageKHR;
 
   if (device) {
     DeviceDispatchTable table;

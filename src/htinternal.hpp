@@ -98,11 +98,78 @@ extern std::atomic<bool> gLoaderInitialized;
 //   Empty = auto-detect.
 extern std::string gConfigTargetExe;
 extern std::string gConfigForceBackend;
+// Diagnostic switches, same section. See utils/diag.cpp.
+// gConfigProfile: log per-frame timing to the loader log.
+// gConfigDisableOverlay: forward presents without rendering the ImGui overlay.
+// gConfigDisableInputHook: do not replace the game's window process.
+extern bool gConfigProfile
+  , gConfigDisableOverlay
+  , gConfigDisableInputHook;
 
 // Read and apply html-config.json's "ht_mod_loader" section. Creates the file
 // from the default template if it does not exist. Call after initPaths and
 // before HTiBackendExpectProcess().
 void HTiLoadLoaderConfig();
+
+// ----------------------------------------------------------------------------
+// [SECTION] Diagnostics. See utils/diag.cpp.
+// ----------------------------------------------------------------------------
+
+// Count a window message handled by HTWndProc. `blocked` is non-zero when the
+// message was withheld from the game. Cheap enough to always call.
+void HTiDiagCountWndProcMsg(
+  u08 blocked);
+
+// Record how long HTWndProc spent, split into the loader's own code and the
+// game's window process. Raw performance-counter ticks, converted by the frame
+// profile. The window process runs on the game's message thread, so its cost
+// lands directly in the game's frame and has to be measured separately from the
+// present hook.
+void HTiDiagAddWndProcTicks(
+  i64 selfTicks,
+  i64 gameTicks);
+
+// Breakdown of the loader's own share of a window message: handing it to ImGui,
+// queueing it, and hotkey dispatch.
+void HTiDiagAddWndProcSplit(
+  i64 delegateTicks,
+  i64 queueTicks,
+  i64 hotkeyTicks);
+
+// Record the single worst message of the current window, per side, with its
+// message id. Averages hide a few catastrophic messages.
+void HTiDiagWorstWndProcMsg(
+  i64 ourTicks,
+  i64 gameTicks,
+  u32 msg);
+
+// Count a message by id, so the message stream can be identified.
+void HTiDiagCountMsgType(
+  u32 msg);
+
+// Count an overlay frame: `skipped` is non-zero when the present hook forwarded
+// the game's present without building an ImGui frame, because the previous
+// overlay submit had not completed yet.
+void HTiDiagCountOverlayFrame(
+  u08 skipped);
+
+// Performance counter read, for the measurements above. ~10ns.
+i64 HTiDiagTicks();
+
+// Record how long the game spent blocked in vkAcquireNextImageKHR. This is where
+// a game stalls when the swapchain has no free image - which is what the
+// overlay's extra submit and present on the graphics queue can cause.
+void HTiDiagAddAcquireTicks(
+  i64 ticks);
+
+// Count messages replayed into ImGui by HTiPumpInput().
+void HTiDiagCountPumped(
+  u32 count);
+
+// Brackets the present hook, for the frame-time profile. Call HTiDiagFrameBegin()
+// before any work and HTiDiagFrameEnd() before every return.
+void HTiDiagFrameBegin();
+void HTiDiagFrameEnd();
 
 // ----------------------------------------------------------------------------
 // [SECTION] Codepage, file and path.
@@ -782,7 +849,12 @@ void HTiBootstrap();
 
 extern bool gShowMainMenu
   , gShowDebugger;
-extern bool gImGuiWantsMouse;
+
+// ImGui's capture flags, latched once per frame on the render thread by
+// HTiUpdateGUI() and read on the game's message thread by the window process.
+// Atomic because those are different threads.
+extern std::atomic<bool> gImGuiWantsMouse
+  , gImGuiWantsKeyboard;
 
 // Initialize ImGui context and window message hook.
 //
@@ -791,6 +863,13 @@ extern bool gImGuiWantsMouse;
 void HTiInitGUI();
 // Destroy ImGui context.
 void HTiDeinitGUI();
+// Replay the window messages recorded by the window process since the last call
+// into imgui_impl_win32.
+//
+// Must be called on the render thread, right before the backend's
+// `ImGui_ImplWin32_NewFrame()`. ImGui must never be fed from the window process
+// directly: see the comment on the input queue in ui/input.cpp.
+void HTiPumpInput();
 // Show all registered windows. Referenced by layer.cpp.
 void HTiUpdateGUI();
 // Render HTML windows. Referenced by bootstrap.cpp.

@@ -10,6 +10,14 @@
 //                       "Sky-test.exe". Empty = use backend defaults.
 //   backend           - force a specific backend by name (e.g. "Impl_Sky").
 //                       Empty = auto-detect.
+//   profile           - log per-frame timing (game frame interval, the loader's
+//                       own cost, window message rates) to html-log-*.log.
+//                       Use this to tell a loader-caused stutter from a
+//                       game-caused one. Default false.
+//   disable_overlay   - never render the ImGui overlay, just forward presents.
+//                       For bisecting a performance problem. Default false.
+//   disable_input_hook- leave the game's window process alone. For bisecting a
+//                       performance problem. Default false.
 #define HTTexts_DefaultLayerConfig "{\n"\
   "\"file_format_version\": \"1.0.0\",\n"\
   "\"layer\": {\n"\
@@ -29,7 +37,10 @@
   "},\n"\
   "\"ht_mod_loader\": {\n"\
     "\"target_executable\": \"\",\n"\
-    "\"backend\": \"\"\n"\
+    "\"backend\": \"\",\n"\
+    "\"profile\": false,\n"\
+    "\"disable_overlay\": false,\n"\
+    "\"disable_input_hook\": false\n"\
   "}\n"\
 "}"
 

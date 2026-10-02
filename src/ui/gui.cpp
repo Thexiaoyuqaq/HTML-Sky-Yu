@@ -14,7 +14,11 @@
 
 bool gShowMainMenu = true
   , gShowDebugger = false;
-bool gImGuiWantsMouse = false;
+
+// Latched once per frame on the render thread, read on the game's message thread
+// by the window process.
+std::atomic<bool> gImGuiWantsMouse{false};
+std::atomic<bool> gImGuiWantsKeyboard{false};
 
 /**
  * Initialize ImGui context and window message hook.
@@ -70,8 +74,13 @@ void HTiInitGUI() {
   style.SeparatorTextPadding = ImVec2(0, 3);
   style.WindowTitleAlign = ImVec2(0.5, 0.5);
 
-  // Install window process hook.
-  HTiInstallInputHook();
+  // Install window process hook. "disable_input_hook" leaves the game's window
+  // process alone, so an input-path problem can be told apart from a rendering
+  // one; the overlay then renders but receives no input.
+  if (gConfigDisableInputHook)
+    LOGW("Config: input hook disabled, the overlay will not receive input.\n");
+  else
+    HTiInstallInputHook();
 }
 
 /**
@@ -97,11 +106,15 @@ void HTiUpdateGUI() {
       guiRenderer(io.DeltaTime, nullptr);
   }
 
-  // Cache capture state once per frame. WM_MOUSEMOVE can arrive hundreds of
-  // times between frames; querying ImGui window hover state from the WndProc
-  // makes the game's input thread do an O(number-of-windows) scan per event.
-  gImGuiWantsMouse = io.WantCaptureMouse
-    || ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
+  // Latch the capture flags once per frame for the window process. The window
+  // process must not ask ImGui anything itself: it runs on the game's message
+  // thread while these are written here on the render thread.
+  //
+  // io.WantCaptureMouse is exactly "the cursor is over one of our windows". It
+  // gates buttons, the wheel and the cursor shape, but never mouse MOTION - see
+  // the comment in HTWndProc() for why.
+  gImGuiWantsMouse = io.WantCaptureMouse;
+  gImGuiWantsKeyboard = io.WantCaptureKeyboard;
 
   // Update all options.
   HTiOptionsUpdate(io.DeltaTime);

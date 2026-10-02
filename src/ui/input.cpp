@@ -1,4 +1,6 @@
 #include <windows.h>
+#include <atomic>
+#include <mutex>
 #include "imgui.h"
 
 #include "htinternal.hpp"
@@ -11,89 +13,146 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
 
 // Original window process of the game.
 static WNDPROC gWndProcOrigin = nullptr;
-static int gMouseTrackedArea = 0;
 
-static bool isVkDown(int vk) {
-  return (GetKeyState(vk) & 0x8000) != 0;
+// ----------------------------------------------------------------------------
+// [SECTION] Deferred window message queue.
+//
+// ImGui is strictly single-threaded. io.AddMouse*Event() / io.AddKeyEvent()
+// append to g.InputEventsQueue, which ImGui::NewFrame() drains and clears. Our
+// window process runs on the game's message thread, while ImGui::NewFrame() runs
+// on the render thread inside the present hook, so calling into ImGui from the
+// window process races with that drain - the vector can be reallocated (or
+// freed) while the render thread is walking it.
+//
+// The window process therefore only records the raw message here, and the render
+// thread replays it through imgui_impl_win32 right before the frame starts.
+// Replaying the original message keeps all of ImGui's own handling - the
+// TrackMouseEvent bookkeeping behind MouseTrackedArea, the mouse source, cursor
+// shapes, key mapping - instead of duplicating a subset of it, which is what the
+// previous hand-written mouse handler did (and it forgot to update
+// bd->MouseTrackedArea, so imgui_impl_win32 fell back to GetCursorPos() +
+// ScreenToClient() on every single frame).
+//
+// Coalescing also bounds the per-frame work: consecutive motion messages
+// collapse on the window thread, so a 1000 Hz mouse delivers at most one motion
+// message per rendered frame instead of a thousand.
+// ----------------------------------------------------------------------------
+
+#define HT_INPUT_QUEUE_CAPACITY 256
+
+struct HTInputMsg {
+  UINT msg;
+  WPARAM wParam;
+  LPARAM lParam;
+};
+
+static HTInputMsg gInputQueue[HT_INPUT_QUEUE_CAPACITY];
+static u32 gInputQueueCount = 0;
+static std::mutex gInputQueueMutex;
+// Set once the ImGui context exists, i.e. by HTiInstallInputHook(). Also tells
+// HTWndProc that the capture flags in gui.cpp are meaningful.
+static std::atomic<bool> gInputReady{false};
+
+static bool isMouseMotionMsg(UINT msg) {
+  return msg == WM_MOUSEMOVE || msg == WM_NCMOUSEMOVE;
 }
 
-static void HTImGuiMouseWndProc(
-  HWND hWnd,
-  UINT uMsg,
+// Messages ImGui has to see. Anything else is irrelevant to it and is forwarded
+// to the game untouched.
+static bool isImGuiInputMsg(UINT msg) {
+  switch (msg) {
+    case WM_MOUSEMOVE: case WM_NCMOUSEMOVE:
+    case WM_MOUSELEAVE: case WM_NCMOUSELEAVE:
+    case WM_LBUTTONDOWN: case WM_LBUTTONDBLCLK: case WM_LBUTTONUP:
+    case WM_RBUTTONDOWN: case WM_RBUTTONDBLCLK: case WM_RBUTTONUP:
+    case WM_MBUTTONDOWN: case WM_MBUTTONDBLCLK: case WM_MBUTTONUP:
+    case WM_XBUTTONDOWN: case WM_XBUTTONDBLCLK: case WM_XBUTTONUP:
+    case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL:
+    case WM_KEYDOWN: case WM_KEYUP:
+    case WM_SYSKEYDOWN: case WM_SYSKEYUP:
+    case WM_CHAR: case WM_SYSCHAR:
+    case WM_SETFOCUS: case WM_KILLFOCUS:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Motion carries no information beyond "latest state", so consecutive motion
+// messages collapse into the newest sample. Messages in between are never
+// dropped, so ordering against clicks is preserved - a click has to be applied
+// with the cursor position that was current when it happened.
+static void queueInputMsg(
+  UINT msg,
   WPARAM wParam,
   LPARAM lParam
 ) {
-  if (!ImGui::GetCurrentContext())
+  if (!gInputReady.load(std::memory_order_relaxed))
+    return;
+  if (!isImGuiInputMsg(msg))
     return;
 
-  ImGuiIO &io = ImGui::GetIO();
-  switch (uMsg) {
-    case WM_MOUSEMOVE:
-    case WM_NCMOUSEMOVE: {
-      const int area = (uMsg == WM_MOUSEMOVE) ? 1 : 2;
-      if (gMouseTrackedArea != area) {
-        TRACKMOUSEEVENT tme_cancel = { sizeof(tme_cancel), TME_CANCEL, hWnd, 0 };
-        TRACKMOUSEEVENT tme_track = {
-          sizeof(tme_track),
-          (DWORD)((area == 2) ? (TME_LEAVE | TME_NONCLIENT) : TME_LEAVE),
-          hWnd,
-          0
-        };
-        if (gMouseTrackedArea != 0)
-          (void)TrackMouseEvent(&tme_cancel);
-        (void)TrackMouseEvent(&tme_track);
-        gMouseTrackedArea = area;
-      }
+  std::lock_guard<std::mutex> lock(gInputQueueMutex);
 
-      POINT mousePos = {
-        (LONG)(short)LOWORD(lParam),
-        (LONG)(short)HIWORD(lParam)
-      };
-      if (uMsg == WM_NCMOUSEMOVE && !ScreenToClient(hWnd, &mousePos))
-        return;
-      io.AddMousePosEvent((float)mousePos.x, (float)mousePos.y);
-      break;
-    }
-    case WM_MOUSELEAVE:
-    case WM_NCMOUSELEAVE:
-      gMouseTrackedArea = 0;
-      io.AddMousePosEvent(-FLT_MAX, -FLT_MAX);
-      break;
-    case WM_LBUTTONDOWN:
-    case WM_LBUTTONDBLCLK:
-      io.AddMouseButtonEvent(0, true);
-      break;
-    case WM_RBUTTONDOWN:
-    case WM_RBUTTONDBLCLK:
-      io.AddMouseButtonEvent(1, true);
-      break;
-    case WM_MBUTTONDOWN:
-    case WM_MBUTTONDBLCLK:
-      io.AddMouseButtonEvent(2, true);
-      break;
-    case WM_XBUTTONDOWN:
-    case WM_XBUTTONDBLCLK:
-      io.AddMouseButtonEvent((GET_XBUTTON_WPARAM(wParam) == XBUTTON1) ? 3 : 4, true);
-      break;
-    case WM_LBUTTONUP:
-      io.AddMouseButtonEvent(0, false);
-      break;
-    case WM_RBUTTONUP:
-      io.AddMouseButtonEvent(1, false);
-      break;
-    case WM_MBUTTONUP:
-      io.AddMouseButtonEvent(2, false);
-      break;
-    case WM_XBUTTONUP:
-      io.AddMouseButtonEvent((GET_XBUTTON_WPARAM(wParam) == XBUTTON1) ? 3 : 4, false);
-      break;
-    case WM_MOUSEWHEEL:
-      io.AddMouseWheelEvent(0.0f, (float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA);
-      break;
-    case WM_MOUSEHWHEEL:
-      io.AddMouseWheelEvent(-(float)GET_WHEEL_DELTA_WPARAM(wParam) / (float)WHEEL_DELTA, 0.0f);
-      break;
+  if (gInputQueueCount && isMouseMotionMsg(msg)
+      && isMouseMotionMsg(gInputQueue[gInputQueueCount - 1].msg))
+    gInputQueueCount--;
+
+  if (gInputQueueCount >= HT_INPUT_QUEUE_CAPACITY)
+    // The queue is drained on every rendered frame, so this only happens while
+    // the overlay is skipped for a long stretch. Dropping the tail keeps the
+    // newest state, which is what the UI actually cares about.
+    return;
+
+  gInputQueue[gInputQueueCount].msg = msg;
+  gInputQueue[gInputQueueCount].wParam = wParam;
+  gInputQueue[gInputQueueCount].lParam = lParam;
+  gInputQueueCount++;
+}
+
+void HTiPumpInput() {
+  static HTInputMsg local[HT_INPUT_QUEUE_CAPACITY];
+  u32 count;
+  bool sawMotion = false;
+
+  {
+    std::lock_guard<std::mutex> lock(gInputQueueMutex);
+    count = gInputQueueCount;
+    for (u32 i = 0; i < count; i++)
+      local[i] = gInputQueue[i];
+    gInputQueueCount = 0;
   }
+
+  HTiDiagCountPumped(count);
+
+  for (u32 i = 0; i < count; i++) {
+    if (isMouseMotionMsg(local[i].msg))
+      sawMotion = true;
+    (void)ImGui_ImplWin32_WndProcHandler(
+      gGameStatus.window,
+      local[i].msg,
+      local[i].wParam,
+      local[i].lParam);
+  }
+
+  // Cursor fallback.
+  //
+  // imgui_impl_win32 only refreshes the cursor from GetCursorPos() while it is
+  // not tracking the mouse (bd->MouseTrackedArea == 0). Replaying the messages
+  // through it keeps that bookkeeping up to date, which means that on a frame
+  // with no motion message the position would be left wherever the previous
+  // message put it. Feed the live position instead, so the overlay cursor tracks
+  // the real one even when the game has the mouse captured or clipped and stops
+  // producing motion messages.
+  if (!sawMotion && gGameStatus.window) {
+    POINT pos;
+    if (::GetCursorPos(&pos) && ::ScreenToClient(gGameStatus.window, &pos))
+      ImGui::GetIO().AddMousePosEvent((f32)pos.x, (f32)pos.y);
+  }
+}
+
+static bool isVkDown(int vk) {
+  return (GetKeyState(vk) & 0x8000) != 0;
 }
 
 /**
@@ -357,8 +416,24 @@ static LRESULT APIENTRY HTWndProc(
   LPARAM lParam
 ) {
   u08 block = 0;
-  ImGuiIO &io = ImGui::GetIO();
+  i64 tStart, tDelegate, tQueue, tHotkey, tEnd;
+  LRESULT result;
 
+  tStart = HTiDiagTicks();
+  HTiDiagCountMsgType(uMsg);
+
+  // Decide what the game is allowed to see.
+  //
+  // While one of our windows is hovered, the overlay owns the mouse: motion,
+  // buttons, the wheel, the cursor shape. Everything else goes to the game
+  // untouched, so outside the overlay the game behaves exactly as it would
+  // without the loader.
+  //
+  // What must NOT happen is setting the cursor from both sides - see the
+  // WM_SETCURSOR case, which is where the measured stutter was.
+  //
+  // The flags are latched once per frame by HTiUpdateGUI(); reading ImGui state
+  // here would race with the render thread.
   switch (uMsg) {
     case WM_MOUSEMOVE:
     case WM_NCMOUSEMOVE:
@@ -378,52 +453,66 @@ static LRESULT APIENTRY HTWndProc(
     case WM_XBUTTONUP:
     case WM_MOUSEWHEEL:
     case WM_MOUSEHWHEEL:
-      HTImGuiMouseWndProc(hWnd, uMsg, wParam, lParam);
+      block = gImGuiWantsMouse.load(std::memory_order_relaxed);
       break;
-    default:
-      // Keep keyboard/text/focus handling on imgui_impl_win32, but avoid
-      // giving it ownership of mouse processing on a window already using ImGui.
-      (void)ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
-      break;
-  }
-
-  // Block the message. We only check for the key down message, in order to
-  // avoid strange behaviors e.g. continuely moving characters.
-  switch (uMsg) {
-    case WM_MOUSEMOVE:
-    case WM_NCMOUSEMOVE:
-    case WM_MOUSELEAVE:
-    case WM_NCMOUSELEAVE:
-    case WM_LBUTTONDOWN:
-    case WM_LBUTTONDBLCLK:
-    case WM_LBUTTONUP:
-    case WM_RBUTTONDOWN:
-    case WM_RBUTTONDBLCLK:
-    case WM_RBUTTONUP:
-    case WM_MBUTTONDOWN:
-    case WM_MBUTTONDBLCLK:
-    case WM_MBUTTONUP:
-    case WM_XBUTTONDOWN:
-    case WM_XBUTTONDBLCLK:
-    case WM_XBUTTONUP:
-    case WM_MOUSEHWHEEL:
-    case WM_MOUSEWHEEL:
     case WM_SETCURSOR:
-      block = io.WantCaptureMouse;
+      // Cursor shapes are applied by the thread that owns the window, so this
+      // message stays synchronous instead of going through the queue.
+      //
+      // This is the one message where the loader must stay out of the way unless
+      // it actually owns the cursor. imgui_impl_win32 answers WM_SETCURSOR by
+      // calling ::SetCursor(::LoadCursor(NULL, IDC_ARROW)), and WM_SETCURSOR
+      // arrives once per mouse move. Answering it while the cursor is over the
+      // game puts the loader in a cursor fight with the game: we set the cursor,
+      // then forwarding the message lets SDL's own WM_SETCURSOR handler set it
+      // again, and the two keep invalidating each other. Measured on Sky: about
+      // 9 ms per move in this function plus about 16 ms in the game's window
+      // process, which is enough to turn every mouse move over the UI into a
+      // visible hitch.
+      //
+      // So: only touch the cursor while one of our windows is hovered, and while
+      // it is ours, swallow the message so the game cannot take it back.
+      if (gImGuiWantsMouse.load(std::memory_order_relaxed)) {
+        (void)ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
+        block = 1;
+      }
       break;
     case WM_SYSKEYDOWN:
     case WM_KEYDOWN:
     case WM_CHAR:
-      block = io.WantCaptureKeyboard;
+      block = gImGuiWantsKeyboard.load(std::memory_order_relaxed);
+      break;
+    default:
       break;
   }
+
+  // Record the message for ImGui. The render thread replays it at the top of the
+  // next frame - see the note on the input queue above.
+  tDelegate = HTiDiagTicks();
+  queueInputMsg(uMsg, wParam, lParam);
+  tQueue = HTiDiagTicks();
+
+  // Hotkeys belong to the game and must see every message, blocked or not.
   HTHotKeyWndProc(hWnd, uMsg, wParam, lParam, &block);
-  if (block)
+  HTiDiagCountWndProcMsg(block);
+  tHotkey = HTiDiagTicks();
+
+  HTiDiagAddWndProcSplit(tDelegate - tStart, tQueue - tDelegate, tHotkey - tQueue);
+
+  if (block) {
+    HTiDiagAddWndProcTicks(tHotkey - tStart, 0);
+    HTiDiagWorstWndProcMsg(tHotkey - tStart, 0, uMsg);
     return 0;
+  }
 
   // Pass the window message to the game.
-  return CallWindowProcW(
-    gWndProcOrigin, hWnd, uMsg, wParam, lParam);
+  result = CallWindowProcW(gWndProcOrigin, hWnd, uMsg, wParam, lParam);
+  tEnd = HTiDiagTicks();
+
+  HTiDiagAddWndProcTicks(tHotkey - tStart, tEnd - tHotkey);
+  HTiDiagWorstWndProcMsg(tHotkey - tStart, tEnd - tHotkey, uMsg);
+
+  return result;
 }
 
 ImGuiKey HTKeyToImGuiKey(HTKeyCode key) {
@@ -444,6 +533,11 @@ ImGuiKey HTKeyToImGuiKey(HTKeyCode key) {
 void HTiInstallInputHook() {
   if (!gGameStatus.window)
     return;
+
+  // The ImGui context already exists here (HTiInitGUI() creates it before
+  // calling this), so the queued messages are safe to replay.
+  gInputReady.store(true, std::memory_order_relaxed);
+
   gWndProcOrigin = (WNDPROC)SetWindowLongPtrW(
     gGameStatus.window,
     GWLP_WNDPROC,
@@ -454,6 +548,8 @@ void HTiInstallInputHook() {
  * Release the window callback hook of the game.
  */
 void HTiUninstallInputHook() {
+  gInputReady.store(false, std::memory_order_relaxed);
+
   if (gGameStatus.window && gWndProcOrigin)
     (void)SetWindowLongPtrW(
       gGameStatus.window,

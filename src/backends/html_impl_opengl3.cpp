@@ -71,6 +71,10 @@ static void doRender(
     FreeLibrary(hOpengl32);
   }
 
+  // Replay the window messages the game's message thread recorded since the
+  // last frame, before ImGui reads its inputs.
+  HTiPumpInput();
+
   // Create new frame.
   ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplWin32_NewFrame();
