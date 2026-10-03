@@ -6,8 +6,8 @@
 #include <windows.h>
 
 #include "htinternal.hpp"
-#include "includes/backends/html_impl_sky.h"
-#include "includes/htconfig.h"
+#include "htmodloader/backends/html_impl_sky.h"
+#include "htmodloader/htconfig.h"
 
 #ifdef HTML_USE_IMPL_SKY
 

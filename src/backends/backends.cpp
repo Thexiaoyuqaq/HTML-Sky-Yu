@@ -8,7 +8,7 @@
 #include "imgui.h"
 
 #include "htinternal.hpp"
-#include "includes/htconfig.h"
+#include "htmodloader/htconfig.h"
 
 typedef int (HTMLAPI *PFN_HTiGameEditionCheck)(
   HTGameEdition);

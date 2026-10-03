@@ -6,7 +6,7 @@
 #include <atomic>
 #include "cJSON.h"
 
-#include "includes/htmodloader.h"
+#include "htmodloader/htmodloader.h"
 #include "utils/texts.h"
 #include "htinternal.hpp"
 

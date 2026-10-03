@@ -3,7 +3,7 @@
 #include <mutex>
 #include "cJSON.h"
 #include "imgui.h"
-#include "includes/htmodloader.h"
+#include "htmodloader/htmodloader.h"
 #include "htinternal.hpp"
 
 #define HT_OPTIONS_SAVE_RATE 5.0f
