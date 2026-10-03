@@ -7,14 +7,21 @@ This file contains the changelog of HTModLoader.
 
 Breaking Changes:
 - Removed zlib support.
-- Move all include files of HTML SDK to individual folder.
 
 Changes:
 - Add CMakeLists.txt to build with cmake.
 
 
 -------------------------------------------------------------------------------
- Version 1.10.2 (2025.08.21)
+ Version 1.10.3 (2026.10.04)
+-------------------------------------------------------------------------------
+
+Breaking Changes:
+- Moved all header files of HTML SDK to individual folder.
+
+
+-------------------------------------------------------------------------------
+ Version 1.10.2 (2026.08.21)
 -------------------------------------------------------------------------------
 
 Changes:
