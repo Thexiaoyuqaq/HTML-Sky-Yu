@@ -26,6 +26,9 @@ std::atomic<bool> gImGuiWantsKeyboard{false};
 static bool gImeContextAssociated = false;
 static HIMC gSavedImeContext = nullptr;
 
+static ImFont *gFont_msyh = nullptr;
+static ImFont *gFont_segoeui = nullptr;
+
 /**
  * Associate the IME with the game window only while an ImGui text field is
  * active, and restore the game's original input context afterwards.
@@ -104,6 +107,16 @@ void HTiInitGUI() {
   style.SeparatorTextAlign = ImVec2(0, 0.5);
   style.SeparatorTextPadding = ImVec2(0, 3);
   style.WindowTitleAlign = ImVec2(0.5, 0.5);
+
+  // Load fonts.
+  gFont_segoeui = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 16.0f);
+  static constexpr ImWchar ranges[] = { 0, 0xFFFF, 0 };
+  ImFontConfig conf;
+  conf.MergeMode = true;
+  gFont_msyh = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msyh.ttc", 16.0f, &conf, ranges);
+
+  if (gFont_segoeui)
+    io.FontDefault = gFont_segoeui;
 
   // Install window process hook. "disable_input_hook" leaves the game's window
   // process alone, so an input-path problem can be told apart from a rendering
