@@ -2,6 +2,7 @@
 // Graphics renderer.
 // ----------------------------------------------------------------------------
 #include <windows.h>
+#include <imm.h>
 #include <unordered_map>
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -20,6 +21,34 @@ bool gShowMainMenu = true
 std::atomic<bool> gImGuiWantsMouse{false};
 std::atomic<bool> gImGuiWantsKeyboard{false};
 
+// Input method context that belonged to the game before the loader took it
+// over for text input.
+static bool gImeContextAssociated = false;
+static HIMC gSavedImeContext = nullptr;
+
+/**
+ * Associate the IME with the game window only while an ImGui text field is
+ * active, and restore the game's original input context afterwards.
+ */
+static void HTiUpdateImeContext(bool wantTextInput) {
+  HWND hWnd = gGameStatus.window;
+  if (!hWnd)
+    return;
+
+  if (wantTextInput && !gImeContextAssociated) {
+    // Take over the input context and associate the default IME so text can
+    // be composed while typing into an ImGui widget.
+    gSavedImeContext = ImmAssociateContext(hWnd, nullptr);
+    ImmAssociateContextEx(hWnd, nullptr, IACE_DEFAULT);
+    gImeContextAssociated = true;
+  } else if (!wantTextInput && gImeContextAssociated) {
+    // Restore the context that belonged to the game.
+    ImmAssociateContext(hWnd, gSavedImeContext);
+    gSavedImeContext = nullptr;
+    gImeContextAssociated = false;
+  }
+}
+
 /**
  * Initialize ImGui context and window message hook.
  * 
@@ -35,6 +64,8 @@ void HTiInitGUI() {
 
   // Initialize ImGui.
   ImGui::CreateContext();
+  // Let ImGui's default IME handler position the composition/candidate window.
+  ImGui::GetMainViewport()->PlatformHandleRaw = gGameStatus.window;
   ImGui_ImplWin32_Init(gGameStatus.window);
   // ImGui_ImplVulkan_Init() is called in layer.cpp by renderGui(), logically
   // after calling HTiInitGUI().
@@ -88,6 +119,7 @@ void HTiInitGUI() {
  */
 void HTiDeinitGUI() {
   HTiUninstallInputHook();
+  HTiUpdateImeContext(false);
   ImGui_ImplVulkan_Shutdown();
   ImGui_ImplWin32_Shutdown();
   ImGui::DestroyContext();
@@ -115,6 +147,10 @@ void HTiUpdateGUI() {
   // the comment in HTWndProc() for why.
   gImGuiWantsMouse = io.WantCaptureMouse;
   gImGuiWantsKeyboard = io.WantCaptureKeyboard;
+
+  // Enable the IME only while an ImGui text field is active, then restore the
+  // input context that belonged to the game.
+  HTiUpdateImeContext(io.WantTextInput);
 
   // Update all options.
   HTiOptionsUpdate(io.DeltaTime);
