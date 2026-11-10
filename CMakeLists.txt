@@ -174,6 +174,11 @@ file(GLOB_RECURSE HTMODLOADER_SOURCES CONFIGURE_DEPENDS
   "${PROJECT_ROOT}/src/*.cpp"
 )
 
+# The MinGW optimizer falsely reports this warning, so it is simply disabled.
+# Must be set before add_library(winhttp ...): add_compile_options() only
+# affects targets created afterwards.
+add_compile_options(-Wno-stringop-overread)
+
 add_library(winhttp SHARED ${HTMODLOADER_SOURCES})
 
 target_include_directories(winhttp PRIVATE
@@ -192,9 +197,6 @@ target_compile_options(winhttp PRIVATE
   -ffunction-sections
   -fdata-sections
 )
-
-# The MinGW optimizer falsely reports this warning, so it is simply disabled.
-add_compile_options(-Wno-stringop-overread)
 
 target_link_libraries(winhttp PRIVATE
   imgui
