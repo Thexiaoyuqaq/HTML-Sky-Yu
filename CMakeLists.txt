@@ -247,6 +247,14 @@ if (HTMODLOADER_ENABLE_LTO)
   set_property(TARGET winhttp PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 endif()
 
+# The proxy stubs contain compiler-level jump trampolines. Keep this source
+# outside LTO so the assembly references to the runtime dispatch slots remain
+# materialized in the final image (carried over from our old Makefile).
+set_source_files_properties(
+  "${PROJECT_ROOT}/src/proxy/winhttp-proxy.c"
+  PROPERTIES COMPILE_OPTIONS "-fno-lto"
+)
+
 # Strip the final binary in Release builds, as the Makefile did with -s.
 target_link_options(winhttp PRIVATE $<$<CONFIG:Release>:-s>)
 
