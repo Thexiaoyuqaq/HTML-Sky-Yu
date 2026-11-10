@@ -174,6 +174,8 @@ void HTiMenuConsole() {
   f32 height;
   bool reclaimFocus = false;
 
+  ImGui::PushFont(gFontMono);
+
   height = ImGui::GetStyle().ItemSpacing.y + ImGui::GetFrameHeightWithSpacing();
   if (ImGui::BeginChild(
     "ConsoleLog",
@@ -210,6 +212,8 @@ void HTiMenuConsole() {
     HTiAddConsoleLine(false, "%s", gConsoleInputBuffer);
     gConsoleInputBuffer[0] = 0;
   }
+
+  ImGui::PopFont();
 
   ImGui::SetItemDefaultFocus();
   if (reclaimFocus)

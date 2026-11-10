@@ -26,8 +26,8 @@ std::atomic<bool> gImGuiWantsKeyboard{false};
 static bool gImeContextAssociated = false;
 static HIMC gSavedImeContext = nullptr;
 
-static ImFont *gFont_msyh = nullptr;
-static ImFont *gFont_segoeui = nullptr;
+ImFont *gFontMono = nullptr
+  , *gFontRegular = nullptr;
 
 /**
  * Associate the IME with the game window only while an ImGui text field is
@@ -109,14 +109,20 @@ void HTiInitGUI() {
   style.WindowTitleAlign = ImVec2(0.5, 0.5);
 
   // Load fonts.
-  gFont_segoeui = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 16.0f);
+  gFontMono = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consola.ttf", 13.0f);
   static constexpr ImWchar ranges[] = { 0, 0xFFFF, 0 };
   ImFontConfig conf;
   conf.MergeMode = true;
-  gFont_msyh = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msyh.ttc", 16.0f, &conf, ranges);
+  io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msyh.ttc", 15.0f, &conf, ranges);
 
-  if (gFont_segoeui)
-    io.FontDefault = gFont_segoeui;
+  gFontRegular = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msyh.ttc", 15.0f, nullptr, ranges);
+
+  if (gFontRegular)
+    io.FontDefault = gFontRegular;
+  else if (gFontMono)
+    io.FontDefault = gFontMono;
+  else
+    LOGW("Failed to load any font.");
 
   // Install window process hook. "disable_input_hook" leaves the game's window
   // process alone, so an input-path problem can be told apart from a rendering

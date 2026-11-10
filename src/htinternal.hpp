@@ -856,6 +856,9 @@ extern bool gShowMainMenu
 extern std::atomic<bool> gImGuiWantsMouse
   , gImGuiWantsKeyboard;
 
+extern ImFont *gFontMono
+  , *gFontRegular;
+
 // Initialize ImGui context and window message hook.
 //
 // Backends should call this function at least once before calling
