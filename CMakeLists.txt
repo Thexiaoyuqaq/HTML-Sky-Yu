@@ -236,6 +236,10 @@ target_link_options(winhttp PRIVATE
   -static
   -Wl,--gc-sections
   -Wl,-O3
+  # Suppress the -Wstringop-overread false positives from MinGW's wmemcpy
+  # wrapper that are emitted inside lto1 during the LTO link. The compile-time
+  # -Wno-stringop-overread above does not reach the link stage.
+  -Wno-stringop-overread
   # Search paths for the external libraries (relative, see note above).
   "-L${VULKAN_LIB_DIR_REL}"
   "-L${MINHOOK_DIR_REL}"
