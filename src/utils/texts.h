@@ -18,6 +18,18 @@
 //                       For bisecting a performance problem. Default false.
 //   disable_input_hook- leave the game's window process alone. For bisecting a
 //                       performance problem. Default false.
+//   fonts             - object overriding the overlay fonts:
+//     regular         - TTF/TTC path for the UI text font. Shipped prefilled
+//                       with Windows' msyh.ttc. Relative paths resolve against
+//                       the folder of winhttp.dll. A path whose file does not
+//                       exist is ignored (with a warning) and the default is
+//                       used.
+//     mono            - TTF/TTC path for the monospace font (console, code).
+//                       Shipped prefilled with Windows' consola.ttf. The
+//                       regular font is merged into it so CJK text renders
+//                       there too.
+//     regular_size    - pixel size of the regular font. Default 15.
+//     mono_size       - pixel size of the monospace font. Default 13.
 #define HTTexts_DefaultLayerConfig "{\n"\
   "\"file_format_version\": \"1.0.0\",\n"\
   "\"layer\": {\n"\
@@ -40,7 +52,13 @@
     "\"backend\": \"\",\n"\
     "\"profile\": false,\n"\
     "\"disable_overlay\": false,\n"\
-    "\"disable_input_hook\": false\n"\
+    "\"disable_input_hook\": false,\n"\
+    "\"fonts\": {\n"\
+      "\"regular\": \"C:\\\\Windows\\\\Fonts\\\\msyh.ttc\",\n"\
+      "\"mono\": \"C:\\\\Windows\\\\Fonts\\\\consola.ttf\",\n"\
+      "\"regular_size\": 15.0,\n"\
+      "\"mono_size\": 13.0\n"\
+    "}\n"\
   "}\n"\
 "}"
 

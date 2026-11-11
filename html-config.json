@@ -17,6 +17,12 @@
   },
   "ht_mod_loader": {
     "target_executable": "",
-    "backend": ""
+    "backend": "",
+    "fonts": {
+      "regular": "C:\\Windows\\Fonts\\msyh.ttc",
+      "mono": "C:\\Windows\\Fonts\\consola.ttf",
+      "regular_size": 15.0,
+      "mono_size": 13.0
+    }
   }
 }

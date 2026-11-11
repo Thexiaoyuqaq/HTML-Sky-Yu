@@ -38,6 +38,43 @@ static void readBoolField(
     out = cJSON_IsTrue(item) != 0;
 }
 
+// Read a font size field (positive float, kept in a sane range) into `out`.
+// Leaves `out` untouched when the field is missing or not a usable number.
+static void readFontSizeField(
+  const cJSON *obj,
+  const char *key,
+  f32 &out
+) {
+  const cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, key);
+  if (!cJSON_IsNumber(item))
+    return;
+  f64 value = cJSON_GetNumberValue(item);
+  if (value <= 0.0 || value > 100.0)
+    return;
+  out = (f32)value;
+}
+
+// Resolve a configured font path to an absolute one. Empty stays empty (=
+// built-in default); relative paths join onto the DLL directory. Returns the
+// path to keep in the config global, or an empty string when the file does
+// not exist (the caller then falls back to the default font).
+static std::string resolveFontPath(
+  const std::string &path
+) {
+  if (path.empty())
+    return path;
+
+  std::wstring wide = HTiUtf8ToWstring(path.c_str());
+  if (!HTiPathIsAbsolute(wide))
+    wide = HTiPathJoin({HTiUtf8ToWstring(gPathDll.c_str()), wide});
+
+  if (!HTiFileExists(wide.c_str())) {
+    LOGW("Config: font file not found: %ls\n", wide.c_str());
+    return "";
+  }
+  return HTiWstringToUtf8(wide.c_str());
+}
+
 void HTiLoadLoaderConfig() {
   // Build the config path next to the DLL.
   std::wstring path = HTiUtf8ToWstring(gPathDll.c_str());
@@ -73,6 +110,25 @@ void HTiLoadLoaderConfig() {
     readBoolField(section, "disable_overlay", gConfigDisableOverlay);
     readBoolField(section, "disable_input_hook", gConfigDisableInputHook);
 
+    // Font overrides. Parsed into temporaries first: resolveFontPath() may
+    // clear a path whose file is missing, and sizes should only change when
+    // the "fonts" object is actually present and well-formed.
+    std::string fontRegular = gConfigFontRegular;
+    std::string fontMono = gConfigFontMono;
+    f32 fontRegularSize = gConfigFontRegularSize;
+    f32 fontMonoSize = gConfigFontMonoSize;
+    const cJSON *fonts = cJSON_GetObjectItemCaseSensitive(section, "fonts");
+    if (cJSON_IsObject(fonts)) {
+      readStringField(fonts, "regular", fontRegular);
+      readStringField(fonts, "mono", fontMono);
+      readFontSizeField(fonts, "regular_size", fontRegularSize);
+      readFontSizeField(fonts, "mono_size", fontMonoSize);
+      gConfigFontRegular = resolveFontPath(fontRegular);
+      gConfigFontMono = resolveFontPath(fontMono);
+      gConfigFontRegularSize = fontRegularSize;
+      gConfigFontMonoSize = fontMonoSize;
+    }
+
     if (!gConfigTargetExe.empty())
       LOGI("Config: target executable overridden to '%s'.\n", gConfigTargetExe.c_str());
     if (!gConfigForceBackend.empty())
@@ -83,6 +139,12 @@ void HTiLoadLoaderConfig() {
       LOGW("Config: overlay rendering disabled.\n");
     if (gConfigDisableInputHook)
       LOGW("Config: window process hook disabled.\n");
+    if (!gConfigFontRegular.empty())
+      LOGI("Config: regular font '%s' (%.1fpx).\n",
+        gConfigFontRegular.c_str(), gConfigFontRegularSize);
+    if (!gConfigFontMono.empty())
+      LOGI("Config: monospace font '%s' (%.1fpx).\n",
+        gConfigFontMono.c_str(), gConfigFontMonoSize);
   }
 
   cJSON_Delete(root);

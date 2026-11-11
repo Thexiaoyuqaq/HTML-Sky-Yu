@@ -38,3 +38,9 @@ std::atomic<bool> gLoaderInitialized{false};
 // Loader config read from html-config.json's "ht_mod_loader" section.
 std::string gConfigTargetExe;
 std::string gConfigForceBackend;
+// Font overrides from the same section's "fonts" object. Empty paths / zero
+// sizes fall back to the built-in defaults in HTiInitGUI().
+std::string gConfigFontRegular;
+std::string gConfigFontMono;
+f32 gConfigFontRegularSize = 0.0f;
+f32 gConfigFontMonoSize = 0.0f;

@@ -98,6 +98,17 @@ extern std::atomic<bool> gLoaderInitialized;
 //   Empty = auto-detect.
 extern std::string gConfigTargetExe;
 extern std::string gConfigForceBackend;
+// Font overrides, read from the "fonts" object inside "ht_mod_loader".
+// gConfigFontRegular / gConfigFontMono: TTF/TTC paths for the UI fonts.
+//   The shipped template prefills the defaults (msyh.ttc / consola.ttf);
+//   an empty entry falls back to them as well. Relative paths resolve
+//   against the folder of winhttp.dll and are converted to absolute ones
+//   during config load; paths whose file does not exist fall back too.
+// gConfigFontRegularSize / gConfigFontMonoSize: pixel sizes. 0 = defaults.
+extern std::string gConfigFontRegular
+  , gConfigFontMono;
+extern f32 gConfigFontRegularSize
+  , gConfigFontMonoSize;
 // Diagnostic switches, same section. See utils/diag.cpp.
 // gConfigProfile: log per-frame timing to the loader log.
 // gConfigDisableOverlay: forward presents without rendering the ImGui overlay.

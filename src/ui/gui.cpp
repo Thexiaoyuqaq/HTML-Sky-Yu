@@ -108,14 +108,28 @@ void HTiInitGUI() {
   style.SeparatorTextPadding = ImVec2(0, 3);
   style.WindowTitleAlign = ImVec2(0.5, 0.5);
 
-  // Load fonts.
-  gFontMono = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consola.ttf", 13.0f);
+  // Load fonts. Paths and sizes come from html-config.json's
+  // "ht_mod_loader"."fonts" section (config.cpp resolved relative paths to
+  // absolute ones and dropped entries whose file does not exist); empty
+  // entries fall back to the defaults.
+  const char *fontRegularPath = gConfigFontRegular.empty()
+    ? "C:\\Windows\\Fonts\\msyh.ttc"
+    : gConfigFontRegular.c_str();
+  const char *fontMonoPath = gConfigFontMono.empty()
+    ? "C:\\Windows\\Fonts\\consola.ttf"
+    : gConfigFontMono.c_str();
+  f32 fontRegularSize = gConfigFontRegularSize > 0 ? gConfigFontRegularSize : 15.0f;
+  f32 fontMonoSize = gConfigFontMonoSize > 0 ? gConfigFontMonoSize : 13.0f;
+
+  gFontMono = io.Fonts->AddFontFromFileTTF(fontMonoPath, fontMonoSize);
   static constexpr ImWchar ranges[] = { 0, 0xFFFF, 0 };
   ImFontConfig conf;
   conf.MergeMode = true;
-  io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msyh.ttc", 15.0f, &conf, ranges);
+  // Merge the regular font (which usually carries the CJK glyphs) into the
+  // monospace one, so the console can display CJK text as well.
+  io.Fonts->AddFontFromFileTTF(fontRegularPath, fontRegularSize, &conf, ranges);
 
-  gFontRegular = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\msyh.ttc", 15.0f, nullptr, ranges);
+  gFontRegular = io.Fonts->AddFontFromFileTTF(fontRegularPath, fontRegularSize, nullptr, ranges);
 
   if (gFontRegular)
     io.FontDefault = gFontRegular;
